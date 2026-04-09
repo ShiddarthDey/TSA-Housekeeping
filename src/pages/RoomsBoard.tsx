@@ -6,7 +6,7 @@ import AppShell from '@/components/AppShell'
 import StatusPill from '@/components/StatusPill'
 import { useAuthStore } from '@/stores/authStore'
 import { supabase } from '@/lib/supabaseClient'
-import type { PostReleaseRequest, Room, RoomStatus, RoomTask } from '@/utils/domain'
+import type { PostReleaseRequest, Role, Room, RoomStatus, RoomTask } from '@/utils/domain'
 import {
   actionLabel,
   allowedNextStatuses,
@@ -19,6 +19,7 @@ import {
   roomTypeLabel,
   roomType,
   statusLabel,
+  roleLabel,
   taskLabel,
 } from '@/utils/domain'
 
@@ -39,11 +40,14 @@ export default function RoomsBoard() {
   const profile = useAuthStore((s) => s.profile)
   const [rooms, setRooms] = useState<Room[]>([])
   const [profileNames, setProfileNames] = useState<Record<string, string>>({})
+  const [profileRoles, setProfileRoles] = useState<Record<string, Role>>({})
   const [releaseRequests, setReleaseRequests] = useState<Record<number, PostReleaseRequest | ''>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeStatus, setActiveStatus] = useState<RoomStatus | 'all' | 'requests' | 'stay' | 'dnd'>('all')
   const [search, setSearch] = useState('')
+  const [supervisorFilter, setSupervisorFilter] = useState<'all' | 'my' | `sup:${string}`>('all')
+  const [staffFilterId, setStaffFilterId] = useState<string>('')
 
   const counts = useMemo(() => {
     const map: Record<RoomStatus, number> = {
@@ -74,9 +78,65 @@ export default function RoomsBoard() {
     return rooms.filter((r) => Boolean(r.dnd)).length
   }, [profile, rooms])
 
+  const supervisorOptions = useMemo(() => {
+    const ids = Array.from(
+      new Set(rooms.map((r) => r.inspected_by).filter((v): v is string => typeof v === 'string' && v.length > 0)),
+    )
+    return ids
+      .map((id) => ({ id, name: profileNames[id] ?? id }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [profileNames, rooms])
+
+  const staffOptions = useMemo(() => {
+    const ids = Array.from(
+      new Set(rooms.map((r) => r.assigned_to).filter((v): v is string => typeof v === 'string' && v.length > 0)),
+    )
+    const rows = ids.map((id) => ({
+      id,
+      name: profileNames[id] ?? id,
+      role: profileRoles[id] ?? null,
+    }))
+
+    const supervisors = rows.filter((r) => r.role === 'supervisor').sort((a, b) => a.name.localeCompare(b.name))
+    const attendants = rows
+      .filter((r) => r.role === 'attendant' || r.role === 'ra')
+      .sort((a, b) => a.name.localeCompare(b.name))
+    const housemen = rows.filter((r) => r.role === 'houseman').sort((a, b) => a.name.localeCompare(b.name))
+    const publicArea = rows.filter((r) => r.role === 'public_area').sort((a, b) => a.name.localeCompare(b.name))
+    const unknown = rows.filter((r) => r.role == null).sort((a, b) => a.name.localeCompare(b.name))
+
+    return { supervisors, attendants, housemen, publicArea, unknown }
+  }, [profileNames, profileRoles, rooms])
+
+  const myStaffOptions = useMemo(() => {
+    if (!profile || profile.role !== 'supervisor') return []
+    const ids = Array.from(
+      new Set(
+        rooms
+          .filter((r) => r.inspected_by === profile.id)
+          .map((r) => r.assigned_to)
+          .filter((v): v is string => typeof v === 'string' && v.length > 0),
+      ),
+    )
+    return ids
+      .map((id) => ({ id, name: profileNames[id] ?? id, role: profileRoles[id] ?? null }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [profile, profileNames, profileRoles, rooms])
+
   const filteredRooms = useMemo(() => {
     const s = search.trim()
-    return rooms
+    let base = rooms
+
+    if (profile.role === 'supervisor') {
+      if (supervisorFilter === 'my') base = base.filter((r) => r.inspected_by === profile.id)
+      if (supervisorFilter.startsWith('sup:')) base = base.filter((r) => r.inspected_by === supervisorFilter.slice(4))
+      if (staffFilterId) base = base.filter((r) => r.inspected_by === profile.id && r.assigned_to === staffFilterId)
+    } else if (profile.role === 'manager') {
+      if (supervisorFilter.startsWith('sup:')) base = base.filter((r) => r.inspected_by === supervisorFilter.slice(4))
+      if (staffFilterId) base = base.filter((r) => r.assigned_to === staffFilterId)
+    }
+
+    return base
       .filter((r) => {
         if (activeStatus === 'all') return true
         if (activeStatus === 'requests') return r.status === 'released' && r.post_release_request === profile.role
@@ -86,7 +146,7 @@ export default function RoomsBoard() {
       })
       .filter((r) => (s ? String(r.room_number).includes(s) : true))
       .sort((a, b) => a.room_number - b.room_number)
-  }, [activeStatus, profile.role, rooms, search])
+  }, [activeStatus, profile, rooms, search, staffFilterId, supervisorFilter])
 
   const loadRooms = useCallback(async () => {
     if (!profile) return
@@ -116,11 +176,19 @@ export default function RoomsBoard() {
       )
 
       if (ids.length > 0) {
-        const { data: profiles, error: profilesError } = await supabase.from('profiles').select('id, name').in('id', ids)
+        const { data: profiles, error: profilesError } = await supabase
+          .from('profiles')
+          .select('id, name, role')
+          .in('id', ids)
         if (!profilesError) {
           const map: Record<string, string> = {}
-          for (const p of (profiles ?? []) as Array<{ id: string; name: string | null }>) map[p.id] = p.name ?? p.id
+          const roleMap: Record<string, Role> = {}
+          for (const p of (profiles ?? []) as Array<{ id: string; name: string | null; role: Role }>) {
+            map[p.id] = p.name ?? p.id
+            roleMap[p.id] = p.role
+          }
           setProfileNames(map)
+          setProfileRoles(roleMap)
         }
       }
     } catch (e) {
@@ -136,6 +204,10 @@ export default function RoomsBoard() {
     const currentTask = ((current?.task ?? 'checkout') as RoomTask) ?? 'checkout'
 
     setError(null)
+    if (toStatus === 'released' && profile.role === 'supervisor' && current?.inspected_by !== profile.id) {
+      setError('You can only release rooms assigned to you.')
+      return
+    }
     const prev = rooms
     setRooms((rs) => rs.map((r) => (r.room_number === roomNumber ? { ...r, status: toStatus } : r)))
 
@@ -202,6 +274,10 @@ export default function RoomsBoard() {
   async function releaseRoom(roomNumber: number, request: PostReleaseRequest | null) {
     if (!profile) return
     const current = rooms.find((r) => r.room_number === roomNumber) ?? null
+    if (profile.role === 'supervisor' && current?.inspected_by !== profile.id) {
+      setError('You can only release rooms assigned to you.')
+      return
+    }
     const releasedBy =
       profile.role === 'manager' ? (current?.inspected_by ?? current?.released_by ?? null) : profile.id
 
@@ -316,6 +392,11 @@ export default function RoomsBoard() {
   }, [loadRooms])
 
   useEffect(() => {
+    if (!profile) return
+    if (profile.role === 'supervisor' && supervisorFilter === 'all') setSupervisorFilter('my')
+  }, [profile, supervisorFilter])
+
+  useEffect(() => {
     const channel = supabase
       .channel('rooms-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, () => void loadRooms())
@@ -422,6 +503,135 @@ export default function RoomsBoard() {
               />
             </div>
           </div>
+
+          {profile.role === 'supervisor' ? (
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <label className="block">
+                <div className="mb-1 text-xs font-medium text-white/70">Supervisor filter</div>
+                <select
+                  value={supervisorFilter}
+                  onChange={(e) => {
+                    const v = e.target.value as 'all' | 'my' | `sup:${string}`
+                    setSupervisorFilter(v)
+                    if (v !== 'my') setStaffFilterId('')
+                  }}
+                  className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-blue-500/40"
+                >
+                  <option value="my" className="bg-[#0B1220]">
+                    My rooms
+                  </option>
+                  <option value="all" className="bg-[#0B1220]">
+                    All rooms
+                  </option>
+                  {supervisorOptions
+                    .filter((s) => s.id !== profile.id)
+                    .map((s) => (
+                      <option key={s.id} value={`sup:${s.id}`} className="bg-[#0B1220]">
+                        {s.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <div className="mb-1 text-xs font-medium text-white/70">My staff</div>
+                <select
+                  value={staffFilterId}
+                  disabled={supervisorFilter !== 'my'}
+                  onChange={(e) => setStaffFilterId(e.target.value)}
+                  className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-blue-500/40 disabled:opacity-40"
+                >
+                  <option value="" className="bg-[#0B1220]">
+                    All
+                  </option>
+                  {myStaffOptions.map((s) => (
+                    <option key={s.id} value={s.id} className="bg-[#0B1220]">
+                      {s.name}
+                      {s.role ? ` (${roleLabel(s.role)})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          ) : profile.role === 'manager' ? (
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <label className="block">
+                <div className="mb-1 text-xs font-medium text-white/70">Supervisor</div>
+                <select
+                  value={supervisorFilter}
+                  onChange={(e) => setSupervisorFilter(e.target.value as 'all' | 'my' | `sup:${string}`)}
+                  className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-blue-500/40"
+                >
+                  <option value="all" className="bg-[#0B1220]">
+                    All
+                  </option>
+                  {supervisorOptions.map((s) => (
+                    <option key={s.id} value={`sup:${s.id}`} className="bg-[#0B1220]">
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block">
+                <div className="mb-1 text-xs font-medium text-white/70">Assigned to</div>
+                <select
+                  value={staffFilterId}
+                  onChange={(e) => setStaffFilterId(e.target.value)}
+                  className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-blue-500/40"
+                >
+                  <option value="" className="bg-[#0B1220]">
+                    All
+                  </option>
+                  {staffOptions.supervisors.length ? (
+                    <optgroup label="Supervisors">
+                      {staffOptions.supervisors.map((s) => (
+                        <option key={s.id} value={s.id} className="bg-[#0B1220]">
+                          {s.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                  {staffOptions.attendants.length ? (
+                    <optgroup label="Room attendants">
+                      {staffOptions.attendants.map((s) => (
+                        <option key={s.id} value={s.id} className="bg-[#0B1220]">
+                          {s.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                  {staffOptions.housemen.length ? (
+                    <optgroup label="Houseman">
+                      {staffOptions.housemen.map((s) => (
+                        <option key={s.id} value={s.id} className="bg-[#0B1220]">
+                          {s.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                  {staffOptions.publicArea.length ? (
+                    <optgroup label="Public area">
+                      {staffOptions.publicArea.map((s) => (
+                        <option key={s.id} value={s.id} className="bg-[#0B1220]">
+                          {s.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                  {staffOptions.unknown.length ? (
+                    <optgroup label="Other">
+                      {staffOptions.unknown.map((s) => (
+                        <option key={s.id} value={s.id} className="bg-[#0B1220]">
+                          {s.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                </select>
+              </label>
+            </div>
+          ) : null}
         </div>
 
         {error ? (
@@ -447,7 +657,7 @@ export default function RoomsBoard() {
                 ? []
                 : allowedNextStatuses(profile.role, room.status, room.assigned_to === profile.id, room.task ?? null)
               const primary = next[0]
-              const canQuick = Boolean(primary)
+              const canQuick = Boolean(primary) && !(profile.role === 'supervisor' && primary === 'released' && room.inspected_by !== profile.id)
               const canDnd =
                 !room.dnd &&
                 room.status === 'dirty' &&
@@ -551,7 +761,10 @@ export default function RoomsBoard() {
                           Release
                         </button>
                       </div>
-                    ) : profile.role === 'supervisor' && primary === 'released' && (room.task ?? 'checkout') === 'checkout' ? (
+                    ) : profile.role === 'supervisor' &&
+                      primary === 'released' &&
+                      (room.task ?? 'checkout') === 'checkout' &&
+                      room.inspected_by === profile.id ? (
                       <div className="flex items-center gap-2">
                         <select
                           value={releaseRequests[room.room_number] ?? ''}

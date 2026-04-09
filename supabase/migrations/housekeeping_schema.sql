@@ -413,11 +413,17 @@ CREATE POLICY rooms_update_supervisor_release
 ON public.rooms
 FOR UPDATE
 TO authenticated
-USING (public.app_current_role() = 'supervisor' AND status = 'pending_inspection' AND task = 'checkout')
+USING (
+  public.app_current_role() = 'supervisor'
+  AND status = 'pending_inspection'
+  AND task = 'checkout'
+  AND inspected_by = auth.uid()
+)
 WITH CHECK (
   status = 'released'
   AND released_by = auth.uid()
   AND assigned_to = (SELECT r.assigned_to FROM public.rooms r WHERE r.room_number = rooms.room_number)
+  AND inspected_by = auth.uid()
   AND inspected_by = (SELECT r.inspected_by FROM public.rooms r WHERE r.room_number = rooms.room_number)
   AND task = 'checkout'
   AND task = (SELECT r.task FROM public.rooms r WHERE r.room_number = rooms.room_number)
