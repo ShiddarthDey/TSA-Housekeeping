@@ -10,11 +10,9 @@ import type { PostReleaseRequest, Role, Room, RoomStatus, RoomTask } from '@/uti
 import {
   actionLabel,
   allowedNextStatuses,
-  canViewAllRooms,
   estimatedMinutesForRoomAndTask,
   formatMinutes,
   formatRoomNumber,
-  postReleaseRequestLabel,
   roomStatusOrder,
   roomTypeLabel,
   roomType,
@@ -36,6 +34,78 @@ function statusIcon(status: RoomStatus) {
   }
 }
 
+type ConfirmState =
+  | null
+  | {
+      title: string
+      message: string
+      confirmText: string
+      tone: 'primary' | 'danger'
+      roomNumber: number
+      action: { type: 'override_clear_request' }
+    }
+
+type RequestModalState =
+  | null
+  | {
+      roomNumber: number
+      target: PostReleaseRequest
+      rush: boolean
+      selected: Record<string, boolean>
+      counts: Record<string, number>
+      ozoneMinutes: number
+      error: string | null
+    }
+
+const HOUSEMAN_OPTIONS: Array<{ key: string; label: string; counter?: boolean }> = [
+  { key: 'body_wash', label: 'Body wash', counter: true },
+  { key: 'hand_wash', label: 'Hand wash' },
+  { key: 'body_lotion', label: 'Body lotion' },
+  { key: 'shampoo', label: 'Shampoo' },
+  { key: 'condtionar', label: 'Condtionar' },
+  { key: 'hand_towel', label: 'Hand towel' },
+  { key: 'bathmat', label: 'Bathmat' },
+  { key: 'bath_towels', label: 'Bath towels', counter: true },
+  { key: 'face_towels', label: 'Face towels', counter: true },
+  { key: 'toilet_tissue', label: 'Toilet tissue', counter: true },
+  { key: 'facial_tissue', label: 'Facial tissue' },
+  { key: 'laundry_docket', label: 'Laundry docket' },
+  { key: 'laundry_bag', label: 'Laundry bag' },
+  { key: 'laundry_docket_and_bag', label: 'Both laundry docket and bag' },
+  { key: 'tea_cup', label: 'Tea cup', counter: true },
+  { key: 'water_glass', label: 'Water glass', counter: true },
+  { key: 'wine_glass', label: 'Wine glass', counter: true },
+  { key: 'spoons', label: 'Spoons', counter: true },
+  { key: 'hair_dryer', label: 'Hair dryer' },
+  { key: 'iron', label: 'Iron' },
+  { key: 'change_iron_board', label: 'Change iron board' },
+  { key: 'fix_iron_board', label: 'Fix iron board' },
+  { key: 'change_iron_board_cover', label: 'Change iron board cover' },
+  { key: 'close_window', label: 'Close window' },
+  { key: 'red_tea', label: 'Red tea', counter: true },
+  { key: 'green_tea', label: 'Green tea', counter: true },
+  { key: 'blue_tea', label: 'Blue tea', counter: true },
+  { key: 'coffee', label: 'Coffee', counter: true },
+  { key: 'decaf_coffee', label: 'Decaf coffee', counter: true },
+  { key: 'brown_sugar', label: 'Brown sugar', counter: true },
+  { key: 'sweetner', label: 'Sweetner', counter: true },
+  { key: 'milk', label: 'Milk', counter: true },
+  { key: 'change_kettle', label: 'Change kettle' },
+  { key: 'keep_blanket', label: 'Keep blanket' },
+  { key: 'take_extra_blanket', label: 'Take extra blanket' },
+  { key: 'take_extra_doona', label: 'Take extra doona' },
+  { key: 'change_topsheet', label: 'Change topsheet' },
+  { key: 'change_pillowcover', label: 'Change pillowcover' },
+  { key: 'make_twin', label: 'Make twin' },
+  { key: 'make_king', label: 'Make king' },
+]
+
+const PUBLIC_AREA_OPTIONS: Array<{ key: string; label: string }> = [{ key: 'vacuum', label: 'Vacuum' }]
+
+const REQUEST_LABELS: Record<string, string> = Object.fromEntries(
+  [...HOUSEMAN_OPTIONS, ...PUBLIC_AREA_OPTIONS].map((o) => [o.key, o.label]),
+) as Record<string, string>
+
 export default function RoomsBoard() {
   const profile = useAuthStore((s) => s.profile)
   const [rooms, setRooms] = useState<Room[]>([])
@@ -44,10 +114,12 @@ export default function RoomsBoard() {
   const [releaseRequests, setReleaseRequests] = useState<Record<number, PostReleaseRequest | ''>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [activeStatus, setActiveStatus] = useState<RoomStatus | 'all' | 'requests' | 'stay' | 'dnd'>('all')
+  const [activeStatus, setActiveStatus] = useState<RoomStatus | 'all' | 'requests' | 'stay' | 'dnd' | 'requested'>('all')
   const [search, setSearch] = useState('')
   const [supervisorFilter, setSupervisorFilter] = useState<'all' | 'my' | `sup:${string}`>('all')
   const [staffFilterId, setStaffFilterId] = useState<string>('')
+  const [confirm, setConfirm] = useState<ConfirmState>(null)
+  const [requestModal, setRequestModal] = useState<RequestModalState>(null)
 
   const counts = useMemo(() => {
     const map: Record<RoomStatus, number> = {
@@ -76,6 +148,12 @@ export default function RoomsBoard() {
     if (!profile) return 0
     if (profile.role !== 'manager' && profile.role !== 'supervisor') return 0
     return rooms.filter((r) => Boolean(r.dnd)).length
+  }, [profile, rooms])
+
+  const requestedCount = useMemo(() => {
+    if (!profile) return 0
+    if (profile.role !== 'manager' && profile.role !== 'supervisor') return 0
+    return rooms.filter((r) => r.status === 'released' && r.post_release_request != null).length
   }, [profile, rooms])
 
   const supervisorOptions = useMemo(() => {
@@ -140,12 +218,22 @@ export default function RoomsBoard() {
       .filter((r) => {
         if (activeStatus === 'all') return true
         if (activeStatus === 'requests') return r.status === 'released' && r.post_release_request === profile.role
+        if (activeStatus === 'requested') return r.status === 'released' && r.post_release_request != null
         if (activeStatus === 'stay') return r.status === 'pending_inspection' && r.task != null && r.task !== 'checkout' && !r.dnd
         if (activeStatus === 'dnd') return Boolean(r.dnd)
         return r.status === activeStatus
       })
       .filter((r) => (s ? String(r.room_number).includes(s) : true))
-      .sort((a, b) => a.room_number - b.room_number)
+      .sort((a, b) => {
+        if (
+          activeStatus === 'requests' &&
+          (profile.role === 'houseman' || profile.role === 'public_area') &&
+          Boolean(a.post_release_request_rush) !== Boolean(b.post_release_request_rush)
+        ) {
+          return Boolean(a.post_release_request_rush) ? -1 : 1
+        }
+        return a.room_number - b.room_number
+      })
   }, [activeStatus, profile, rooms, search, staffFilterId, supervisorFilter])
 
   const loadRooms = useCallback(async () => {
@@ -156,7 +244,7 @@ export default function RoomsBoard() {
       const { data, error } = await supabase
         .from('rooms')
         .select(
-          'room_number, status, task, post_release_request, dnd, dnd_by, dnd_at, assigned_to, inspected_by, released_by, released_at, updated_at',
+          'room_number, status, task, post_release_request, post_release_request_details, post_release_request_rush, post_release_request_claimed_by, post_release_request_claimed_at, dnd, dnd_by, dnd_at, assigned_to, inspected_by, released_by, released_at, updated_at',
         )
       if (error) throw error
       const nextRooms = (data ?? []) as Room[]
@@ -166,10 +254,11 @@ export default function RoomsBoard() {
         new Set(
           nextRooms
             .flatMap((r) => [
-              canViewAllRooms(profile.role) ? r.assigned_to : null,
+              r.assigned_to,
               r.inspected_by,
               r.released_by,
               r.dnd_by,
+              r.post_release_request_claimed_by,
             ])
             .filter((v): v is string => typeof v === 'string' && v.length > 0),
         ),
@@ -271,7 +360,12 @@ export default function RoomsBoard() {
     }
   }
 
-  async function releaseRoom(roomNumber: number, request: PostReleaseRequest | null) {
+  async function releaseRoom(
+    roomNumber: number,
+    request: PostReleaseRequest | null,
+    requestDetails: unknown | null = null,
+    requestRush: boolean = false,
+  ) {
     if (!profile) return
     const current = rooms.find((r) => r.room_number === roomNumber) ?? null
     if (profile.role === 'supervisor' && current?.inspected_by !== profile.id) {
@@ -292,6 +386,10 @@ export default function RoomsBoard() {
               released_by: releasedBy,
               released_at: new Date().toISOString(),
               post_release_request: request,
+              post_release_request_details: request ? requestDetails : null,
+              post_release_request_rush: request ? Boolean(requestRush) : false,
+              post_release_request_claimed_by: null,
+              post_release_request_claimed_at: null,
             }
           : r,
       ),
@@ -302,6 +400,10 @@ export default function RoomsBoard() {
       released_by: releasedBy,
       released_at: new Date().toISOString(),
       post_release_request: request,
+      post_release_request_details: request ? requestDetails : null,
+      post_release_request_rush: request ? Boolean(requestRush) : false,
+      post_release_request_claimed_by: null,
+      post_release_request_claimed_at: null,
     }
 
     const { error } = await supabase.from('rooms').update(patch).eq('room_number', roomNumber)
@@ -318,13 +420,68 @@ export default function RoomsBoard() {
   }
 
   async function clearPostReleaseRequest(roomNumber: number) {
+    if (!profile) return
     setError(null)
     const prev = rooms
     setRooms((rs) =>
-      rs.map((r) => (r.room_number === roomNumber ? { ...r, post_release_request: null } : r)),
+      rs.map((r) =>
+        r.room_number === roomNumber
+          ? { ...r, post_release_request: null, post_release_request_details: null, post_release_request_rush: false }
+          : r,
+      ),
     )
 
-    const { error } = await supabase.from('rooms').update({ post_release_request: null }).eq('room_number', roomNumber)
+    const { error } = await supabase.rpc('clear_post_release_request', { p_room_number: roomNumber })
+    if (error) {
+      setRooms(prev)
+      setError(error.message)
+    }
+  }
+
+  async function overrideClearPostReleaseRequest(roomNumber: number) {
+    setError(null)
+    const prev = rooms
+    setRooms((rs) =>
+      rs.map((r) =>
+        r.room_number === roomNumber
+          ? { ...r, post_release_request: null, post_release_request_details: null, post_release_request_rush: false }
+          : r,
+      ),
+    )
+
+    const { error } = await supabase
+      .from('rooms')
+      .update({ post_release_request: null, post_release_request_details: null, post_release_request_rush: false })
+      .eq('room_number', roomNumber)
+    if (error) {
+      setRooms(prev)
+      setError(error.message)
+    }
+  }
+
+  async function claimPostReleaseRequest(roomNumber: number) {
+    if (!profile) return
+    if (profile.role !== 'houseman' && profile.role !== 'public_area') return
+
+    setError(null)
+    const current = rooms.find((r) => r.room_number === roomNumber) ?? null
+    if (!current?.post_release_request) return
+    if (current.status !== 'released') return
+    if (current.post_release_request !== profile.role) return
+    if (current.post_release_request_claimed_by) return
+
+    const prev = rooms
+    const claimedAt = new Date().toISOString()
+    setRooms((rs) =>
+      rs.map((r) =>
+        r.room_number === roomNumber
+          ? { ...r, post_release_request_claimed_by: profile.id, post_release_request_claimed_at: claimedAt }
+          : r,
+      ),
+    )
+
+    const { error } = await supabase.rpc('claim_post_release_request', { p_room_number: roomNumber })
+
     if (error) {
       setRooms(prev)
       setError(error.message)
@@ -364,27 +521,54 @@ export default function RoomsBoard() {
     if (!profile) return
     const current = rooms.find((r) => r.room_number === roomNumber) ?? null
     if (!current?.post_release_request) return
-    if (profile.role !== 'supervisor') return
-    if (current.inspected_by !== profile.id) return
+    if (profile.role !== 'supervisor' && profile.role !== 'manager') return
+    if (profile.role === 'supervisor' && current.inspected_by !== profile.id) return
 
-    const ok = window.confirm(
-      `This room still has an active ${postReleaseRequestLabel(
-        current.post_release_request as PostReleaseRequest,
-      )}. If Houseman/Public Area has not released it yet, clearing it will remove it from their Requests list.\n\nDo you want to release it anyway?`,
-    )
-    if (!ok) return
+    const requestedTo = current.post_release_request === 'houseman' ? 'Houseman' : 'Public Area'
+    setConfirm({
+      title: 'Confirm release',
+      message: `Are you sure you want to release the room? ${requestedTo} may still not have completed the request.`,
+      confirmText: 'Release',
+      tone: 'danger',
+      roomNumber,
+      action: { type: 'override_clear_request' },
+    })
+  }
 
-    setError(null)
-    const prev = rooms
-    setRooms((rs) =>
-      rs.map((r) => (r.room_number === roomNumber ? { ...r, post_release_request: null } : r)),
-    )
+  type RequestToken = { key: string; label: string; count?: number; tone?: 'ozone' }
 
-    const { error } = await supabase.from('rooms').update({ post_release_request: null }).eq('room_number', roomNumber)
-    if (error) {
-      setRooms(prev)
-      setError(error.message)
+  function getRequestTokens(target: PostReleaseRequest, details: unknown | null | undefined): RequestToken[] {
+    if (!details || typeof details !== 'object' || Array.isArray(details)) return []
+    const d = details as Record<string, unknown>
+    const itemsRaw = d.items
+    const items =
+      itemsRaw && typeof itemsRaw === 'object' && !Array.isArray(itemsRaw)
+        ? (itemsRaw as Record<string, unknown>)
+        : (d as Record<string, unknown>)
+
+    const options = target === 'houseman' ? HOUSEMAN_OPTIONS : PUBLIC_AREA_OPTIONS
+    const tokens: RequestToken[] = []
+    for (const opt of options) {
+      const v = items[opt.key]
+      if (v === true) {
+        tokens.push({ key: opt.key, label: opt.label })
+        continue
+      }
+      const n = typeof v === 'number' ? Math.round(v) : typeof v === 'string' ? Math.round(Number(v)) : 0
+      if (Number.isFinite(n) && n > 0) tokens.push({ key: opt.key, label: opt.label, count: n })
     }
+
+    if (target === 'houseman') {
+      const ozone =
+        typeof d.ozone_minutes === 'number'
+          ? Math.round(d.ozone_minutes)
+          : typeof d.ozone_minutes === 'string'
+            ? Math.round(Number(d.ozone_minutes))
+            : 0
+      if (Number.isFinite(ozone) && ozone > 0) tokens.push({ key: 'ozone_minutes', label: 'Ozone', count: ozone, tone: 'ozone' })
+    }
+
+    return tokens
   }
 
   useEffect(() => {
@@ -419,6 +603,266 @@ export default function RoomsBoard() {
   return (
     <AppShell title="Rooms">
       <div className="space-y-4">
+        {confirm ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
+            <div
+              className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+              onClick={() => setConfirm(null)}
+              role="presentation"
+            />
+            <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-[#111A2E] p-4 shadow-2xl shadow-black/40">
+              <div className="text-sm font-semibold text-white">{confirm.title}</div>
+              <div className="mt-2 text-sm text-white/70">{confirm.message}</div>
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirm(null)}
+                  className="rounded-xl bg-white/5 px-3 py-2 text-xs font-medium text-white/90 ring-1 ring-white/10 hover:bg-white/10"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cur = confirm
+                    setConfirm(null)
+                    void overrideClearPostReleaseRequest(cur.roomNumber)
+                  }}
+                  className={`rounded-xl px-3 py-2 text-xs font-semibold text-white shadow-lg ${
+                    confirm.tone === 'danger'
+                      ? 'bg-red-500 shadow-red-500/20 hover:bg-red-400'
+                      : 'bg-blue-500 shadow-blue-500/20 hover:bg-blue-400'
+                  }`}
+                >
+                  {confirm.confirmText}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {requestModal ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
+            <div
+              className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+              onClick={() => {
+                const cur = requestModal
+                setRequestModal(null)
+                setReleaseRequests((m) => ({ ...m, [cur.roomNumber]: '' }))
+              }}
+              role="presentation"
+            />
+            <div className="relative w-full max-w-2xl rounded-2xl border border-white/10 bg-[#111A2E] shadow-2xl shadow-black/40">
+              <div className="flex items-start justify-between gap-3 border-b border-white/10 p-4">
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-white">
+                    {requestModal.target === 'houseman' ? 'Houseman request' : 'Public Area request'} ·{' '}
+                    {formatRoomNumber(requestModal.roomNumber)}
+                  </div>
+                  <div className="mt-1 text-xs text-white/60">Select what needs to be done for this room.</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cur = requestModal
+                    setRequestModal(null)
+                    setReleaseRequests((m) => ({ ...m, [cur.roomNumber]: '' }))
+                  }}
+                  className="rounded-xl bg-white/5 px-3 py-2 text-xs font-medium text-white/90 ring-1 ring-white/10 hover:bg-white/10"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="max-h-[70vh] overflow-y-auto p-4">
+                <label className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+                  <input
+                    type="checkbox"
+                    checked={requestModal.rush}
+                    onChange={(e) => setRequestModal((s) => (s ? { ...s, rush: e.target.checked } : s))}
+                  />
+                  <div className="text-sm font-semibold text-white">Rush room</div>
+                  <div className="text-xs text-white/60">Sorts to the top of the request list.</div>
+                </label>
+
+                {requestModal.target === 'houseman' ? (
+                  <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {HOUSEMAN_OPTIONS.map((opt) =>
+                      opt.counter ? (
+                        <div
+                          key={opt.key}
+                          className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-2"
+                        >
+                          <div className="text-sm text-white">{opt.label}</div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setRequestModal((s) => {
+                                  if (!s) return s
+                                  const prev = s.counts[opt.key] ?? 0
+                                  const next = Math.max(0, prev - 1)
+                                  return { ...s, counts: { ...s.counts, [opt.key]: next } }
+                                })
+                              }
+                              className="h-8 w-8 rounded-lg bg-white/5 text-sm font-semibold text-white/90 ring-1 ring-white/10 hover:bg-white/10"
+                            >
+                              -
+                            </button>
+                            <div className="w-8 text-center text-sm font-semibold text-white">
+                              {requestModal.counts[opt.key] ?? 0}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setRequestModal((s) => {
+                                  if (!s) return s
+                                  const prev = s.counts[opt.key] ?? 0
+                                  const next = Math.min(99, prev + 1)
+                                  return { ...s, counts: { ...s.counts, [opt.key]: next } }
+                                })
+                              }
+                              className="h-8 w-8 rounded-lg bg-white/5 text-sm font-semibold text-white/90 ring-1 ring-white/10 hover:bg-white/10"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <label
+                          key={opt.key}
+                          className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-2"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={Boolean(requestModal.selected[opt.key])}
+                            onChange={(e) =>
+                              setRequestModal((s) => {
+                                if (!s) return s
+                                return { ...s, selected: { ...s.selected, [opt.key]: e.target.checked } }
+                              })
+                            }
+                          />
+                          <div className="text-sm text-white">{opt.label}</div>
+                        </label>
+                      ),
+                    )}
+
+                    <div className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-2 sm:col-span-2">
+                      <div className="text-sm text-white">Keep ozone for</div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setRequestModal((s) => {
+                              if (!s) return s
+                              const next = Math.max(0, s.ozoneMinutes - 1)
+                              return { ...s, ozoneMinutes: next }
+                            })
+                          }
+                          className="h-8 w-8 rounded-lg bg-white/5 text-sm font-semibold text-white/90 ring-1 ring-white/10 hover:bg-white/10"
+                        >
+                          -
+                        </button>
+                        <div className="w-10 text-center text-sm font-semibold text-white">{requestModal.ozoneMinutes}</div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setRequestModal((s) => {
+                              if (!s) return s
+                              const next = Math.min(240, s.ozoneMinutes + 1)
+                              return { ...s, ozoneMinutes: next }
+                            })
+                          }
+                          className="h-8 w-8 rounded-lg bg-white/5 text-sm font-semibold text-white/90 ring-1 ring-white/10 hover:bg-white/10"
+                        >
+                          +
+                        </button>
+                        <div className="text-sm text-white/70">minute(s)</div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-3 grid grid-cols-1 gap-2">
+                    {PUBLIC_AREA_OPTIONS.map((opt) => (
+                      <label
+                        key={opt.key}
+                        className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-2"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={Boolean(requestModal.selected[opt.key])}
+                          onChange={(e) =>
+                            setRequestModal((s) => {
+                              if (!s) return s
+                              return { ...s, selected: { ...s.selected, [opt.key]: e.target.checked } }
+                            })
+                          }
+                        />
+                        <div className="text-sm text-white">{opt.label}</div>
+                      </label>
+                    ))}
+                  </div>
+                )}
+
+                {requestModal.error ? (
+                  <div className="mt-3 rounded-xl border border-red-400/20 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+                    {requestModal.error}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 border-t border-white/10 p-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cur = requestModal
+                    setRequestModal(null)
+                    setReleaseRequests((m) => ({ ...m, [cur.roomNumber]: '' }))
+                  }}
+                  className="rounded-xl bg-white/5 px-3 py-2 text-xs font-medium text-white/90 ring-1 ring-white/10 hover:bg-white/10"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cur = requestModal
+                    if (!cur) return
+
+                    const items: Record<string, number | boolean> = {}
+                    for (const opt of cur.target === 'houseman' ? HOUSEMAN_OPTIONS : PUBLIC_AREA_OPTIONS) {
+                      if ((opt as { counter?: boolean }).counter) {
+                        const n = Math.max(0, Math.round(cur.counts[opt.key] ?? 0))
+                        if (n > 0) items[opt.key] = n
+                      } else if (cur.selected[opt.key]) {
+                        items[opt.key] = true
+                      }
+                    }
+                    const ozoneMinutes = Math.max(0, Math.round(cur.ozoneMinutes || 0))
+                    const hasAny =
+                      Object.keys(items).length > 0 || (cur.target === 'houseman' ? ozoneMinutes > 0 : false)
+
+                    if (!hasAny) {
+                      setRequestModal((s) => (s ? { ...s, error: 'Select at least one request item.' } : s))
+                      return
+                    }
+
+                    const details: Record<string, unknown> = { items }
+                    if (cur.target === 'houseman' && ozoneMinutes > 0) details.ozone_minutes = ozoneMinutes
+
+                    setRequestModal(null)
+                    void releaseRoom(cur.roomNumber, cur.target, details, cur.rush)
+                  }}
+                  className="rounded-xl bg-blue-500 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-blue-500/20 hover:bg-blue-400"
+                >
+                  Request
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         <div className="rounded-2xl border border-white/10 bg-[#111A2E] p-4">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0">
@@ -469,6 +913,15 @@ export default function RoomsBoard() {
             ) : null}
             {profile.role === 'manager' || profile.role === 'supervisor' ? (
               <>
+                <button
+                  type="button"
+                  onClick={() => setActiveStatus('requested')}
+                  className={`whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-medium ring-1 ring-white/10 ${
+                    activeStatus === 'requested' ? 'bg-white/10 text-white' : 'bg-white/5 text-white/80 hover:bg-white/10'
+                  }`}
+                >
+                  Requested ({requestedCount})
+                </button>
                 <button
                   type="button"
                   onClick={() => setActiveStatus('stay')}
@@ -678,7 +1131,11 @@ export default function RoomsBoard() {
                         {statusIcon(room.status)}
                       </div>
                       <div className="text-sm font-semibold leading-5">{formatRoomNumber(room.room_number)}</div>
-                      <StatusPill status={room.status} task={room.task ?? null} />
+                      <StatusPill
+                        status={room.status}
+                        task={room.task ?? null}
+                        postReleaseRequest={room.post_release_request ?? null}
+                      />
                       {room.task ? (
                         <span
                           className={`ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-[11px] ring-1 ${
@@ -691,9 +1148,18 @@ export default function RoomsBoard() {
                         </span>
                       ) : null}
                       {room.dnd ? <span className="ml-2 text-[11px] font-semibold text-amber-200">DND</span> : null}
-                      {room.post_release_request ? (
-                        <span className="ml-2 text-[11px] text-white/60">
-                          {postReleaseRequestLabel(room.post_release_request as PostReleaseRequest)}
+                      {(profile.role === 'houseman' || profile.role === 'public_area') &&
+                      activeStatus === 'requests' &&
+                      room.post_release_request_rush ? (
+                        <span className="ml-2 inline-flex items-center rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-semibold text-red-100 ring-1 ring-red-400/20">
+                          RUSH
+                        </span>
+                      ) : null}
+                      {(profile.role === 'houseman' || profile.role === 'public_area') &&
+                      activeStatus === 'requests' &&
+                      room.post_release_request_claimed_by === profile.id ? (
+                        <span className="ml-2 inline-flex items-center rounded-full bg-white/5 px-2 py-0.5 text-[11px] font-semibold text-white/80 ring-1 ring-white/10">
+                          Claimed
                         </span>
                       ) : null}
                     </div>
@@ -702,10 +1168,29 @@ export default function RoomsBoard() {
                       {formatMinutes(
                         estimatedMinutesForRoomAndTask(room.room_number, (room.task ?? 'checkout') as RoomTask),
                       )}
-                      m · {room.assigned_to ? 'Assigned' : 'Unassigned'}
+                      m · {room.assigned_to ? `Assigned to: ${profileNames[room.assigned_to] ?? 'Unknown'}` : 'Unassigned'}
                       {room.inspected_by ? ` · Supervisor: ${profileNames[room.inspected_by] ?? room.inspected_by}` : ''}
                       {room.released_by ? ` · Released by: ${profileNames[room.released_by] ?? room.released_by}` : ''}
                     </div>
+                    {(profile.role === 'houseman' || profile.role === 'public_area') &&
+                    activeStatus === 'requests' &&
+                    room.post_release_request_details ? (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {getRequestTokens(profile.role as PostReleaseRequest, room.post_release_request_details).map((t) => (
+                          <span
+                            key={t.key}
+                            className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] ring-1 ${
+                              t.tone === 'ozone'
+                                ? 'bg-amber-500/15 text-amber-200 ring-amber-400/20'
+                                : 'bg-white/5 text-white/80 ring-white/10'
+                            }`}
+                          >
+                            {t.label}
+                            {typeof t.count === 'number' && t.count > 0 ? (t.key === 'ozone_minutes' ? `: ${t.count} min` : ` x${t.count}`) : ''}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="flex items-center gap-2 px-4 pb-3 sm:pb-3">
@@ -722,12 +1207,21 @@ export default function RoomsBoard() {
                       <div className="flex items-center gap-2">
                         <select
                           value={releaseRequests[room.room_number] ?? ''}
-                          onChange={(e) =>
-                            setReleaseRequests((m) => ({
-                              ...m,
-                              [room.room_number]: e.target.value as PostReleaseRequest | '',
-                            }))
-                          }
+                          onChange={(e) => {
+                            const v = e.target.value as PostReleaseRequest | ''
+                            setReleaseRequests((m) => ({ ...m, [room.room_number]: v }))
+                            if (v === 'houseman' || v === 'public_area') {
+                              setRequestModal({
+                                roomNumber: room.room_number,
+                                target: v,
+                                rush: false,
+                                selected: {},
+                                counts: {},
+                                ozoneMinutes: 0,
+                                error: null,
+                              })
+                            }
+                          }}
                           className="min-w-0 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white outline-none focus:ring-2 focus:ring-blue-500/40"
                         >
                           <option value="" className="bg-[#0B1220]">
@@ -742,21 +1236,9 @@ export default function RoomsBoard() {
                         </select>
                         <button
                           type="button"
-                          onClick={() => {
-                            const req = releaseRequests[room.room_number]
-                              ? (releaseRequests[room.room_number] as PostReleaseRequest)
-                              : null
-
-                            if (req) {
-                              const ok = window.confirm(
-                                `You selected ${postReleaseRequestLabel(req)}.\n\nAfter releasing, this room will stay in their Requests list until they press Release on their side.\n\nDo you want to release the room now?`,
-                              )
-                              if (!ok) return
-                            }
-
-                            void releaseRoom(room.room_number, req)
-                          }}
-                          className="rounded-xl bg-blue-500 px-3 py-2 text-xs font-semibold text-white shadow-lg shadow-blue-500/20 hover:bg-blue-400"
+                          disabled={Boolean(releaseRequests[room.room_number])}
+                          onClick={() => void releaseRoom(room.room_number, null)}
+                          className="rounded-xl bg-blue-500 px-3 py-2 text-xs font-semibold text-white shadow-lg shadow-blue-500/20 hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           Release
                         </button>
@@ -768,12 +1250,21 @@ export default function RoomsBoard() {
                       <div className="flex items-center gap-2">
                         <select
                           value={releaseRequests[room.room_number] ?? ''}
-                          onChange={(e) =>
-                            setReleaseRequests((m) => ({
-                              ...m,
-                              [room.room_number]: e.target.value as PostReleaseRequest | '',
-                            }))
-                          }
+                          onChange={(e) => {
+                            const v = e.target.value as PostReleaseRequest | ''
+                            setReleaseRequests((m) => ({ ...m, [room.room_number]: v }))
+                            if (v === 'houseman' || v === 'public_area') {
+                              setRequestModal({
+                                roomNumber: room.room_number,
+                                target: v,
+                                rush: false,
+                                selected: {},
+                                counts: {},
+                                ozoneMinutes: 0,
+                                error: null,
+                              })
+                            }
+                          }}
                           className="min-w-0 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white outline-none focus:ring-2 focus:ring-blue-500/40"
                         >
                           <option value="" className="bg-[#0B1220]">
@@ -788,21 +1279,9 @@ export default function RoomsBoard() {
                         </select>
                         <button
                           type="button"
-                          onClick={() => {
-                            const req = releaseRequests[room.room_number]
-                              ? (releaseRequests[room.room_number] as PostReleaseRequest)
-                              : null
-
-                            if (req) {
-                              const ok = window.confirm(
-                                `You selected ${postReleaseRequestLabel(req)}.\n\nAfter releasing, this room will stay in their Requests list until they press Release on their side.\n\nDo you want to release the room now?`,
-                              )
-                              if (!ok) return
-                            }
-
-                            void releaseRoom(room.room_number, req)
-                          }}
-                          className="rounded-xl bg-blue-500 px-3 py-2 text-xs font-semibold text-white shadow-lg shadow-blue-500/20 hover:bg-blue-400"
+                          disabled={Boolean(releaseRequests[room.room_number])}
+                          onClick={() => void releaseRoom(room.room_number, null)}
+                          className="rounded-xl bg-blue-500 px-3 py-2 text-xs font-semibold text-white shadow-lg shadow-blue-500/20 hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           Release
                         </button>
@@ -832,13 +1311,25 @@ export default function RoomsBoard() {
                     {(profile.role === 'houseman' || profile.role === 'public_area') &&
                     room.status === 'released' &&
                     room.post_release_request === profile.role ? (
-                      <button
-                        type="button"
-                        onClick={() => void clearPostReleaseRequest(room.room_number)}
-                        className="rounded-xl bg-white/5 px-3 py-2 text-xs font-medium text-white/90 ring-1 ring-white/10 hover:bg-white/10"
-                      >
-                        Release
-                      </button>
+                      room.post_release_request_claimed_by ? (
+                        room.post_release_request_claimed_by === profile.id ? (
+                          <button
+                            type="button"
+                            onClick={() => void clearPostReleaseRequest(room.room_number)}
+                            className="rounded-xl bg-white/5 px-3 py-2 text-xs font-medium text-white/90 ring-1 ring-white/10 hover:bg-white/10"
+                          >
+                            Release
+                          </button>
+                        ) : null
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => void claimPostReleaseRequest(room.room_number)}
+                          className="rounded-xl bg-blue-500 px-3 py-2 text-xs font-semibold text-white shadow-lg shadow-blue-500/20 hover:bg-blue-400"
+                        >
+                          Claim
+                        </button>
+                      )
                     ) : profile.role === 'supervisor' &&
                       room.status === 'released' &&
                       room.inspected_by === profile.id &&
@@ -852,6 +1343,18 @@ export default function RoomsBoard() {
                           Release
                         </button>
                       ) : null
+                    ) : null}
+                    {profile.role === 'manager' &&
+                    room.status === 'released' &&
+                    room.post_release_request &&
+                    (room.task ?? 'checkout') === 'checkout' ? (
+                      <button
+                        type="button"
+                        onClick={() => void supervisorOverrideReleaseRequest(room.room_number)}
+                        className="rounded-xl bg-red-500/15 px-3 py-2 text-xs font-semibold text-red-100 ring-1 ring-red-400/20 hover:bg-red-500/20"
+                      >
+                        Release
+                      </button>
                     ) : null}
                   </div>
                 </div>

@@ -1,4 +1,4 @@
-import { CheckCircle2, Grid3X3, Shield, TriangleAlert, Users } from 'lucide-react'
+import { CheckCircle2, Grid3X3, Shield, Users } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 
@@ -30,10 +30,6 @@ type StaffRow = {
 type TaskChoice = RoomTask
 
 type AssignSelection = Record<number, TaskChoice>
-
-type EndSessionStep = 'idle' | 'exporting' | 'deleting' | 'done'
-
-type AnyRow = Record<string, unknown>
 
 function generateRoomNumbers(): string[] {
   const out: string[] = []
@@ -78,12 +74,6 @@ export default function StaffManagement() {
   const [saving, setSaving] = useState(false)
   const [success, setSuccess] = useState<string | null>(null)
   const [inspectorId, setInspectorId] = useState<string>('')
-
-  const [endOpen, setEndOpen] = useState(false)
-  const [endConfirmText, setEndConfirmText] = useState('')
-  const [endStep, setEndStep] = useState<EndSessionStep>('idle')
-  const [endError, setEndError] = useState<string | null>(null)
-  const [endSuccess, setEndSuccess] = useState<string | null>(null)
 
   const canAccess = profile?.role === 'manager' || profile?.role === 'supervisor'
 
@@ -173,100 +163,6 @@ export default function StaffManagement() {
     if (!activeShiftCapacity) return false
     return selectedMinutes > activeShiftCapacity
   }, [activeShiftCapacity, selectedMinutes])
-
-  function csvEscape(v: unknown): string {
-    if (v == null) return ''
-    const s = typeof v === 'string' ? v : typeof v === 'number' ? String(v) : typeof v === 'boolean' ? String(v) : JSON.stringify(v)
-    const needs = s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')
-    const escaped = s.replace(/"/g, '""')
-    return needs ? `"${escaped}"` : escaped
-  }
-
-  async function fetchAll(table: string): Promise<AnyRow[]> {
-    const out: AnyRow[] = []
-    const pageSize = 1000
-    let from = 0
-    while (true) {
-      const { data, error } = await supabase.from(table).select('*').range(from, from + pageSize - 1)
-      if (error) throw error
-      const chunk = ((data ?? []) as unknown) as AnyRow[]
-      out.push(...chunk)
-      if (chunk.length < pageSize) break
-      from += pageSize
-    }
-    return out
-  }
-
-  function downloadCsv(filename: string, content: string) {
-    const blob = new Blob([content], { type: 'text/csv;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    a.rel = 'noopener'
-    a.style.display = 'none'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
-  }
-
-  async function endWorkSession() {
-    if (!profile) return
-    if (profile.role !== 'manager' && profile.role !== 'supervisor') return
-    if (endConfirmText.trim().toUpperCase() !== 'END') return
-
-    setEndError(null)
-    setEndSuccess(null)
-    setEndStep('exporting')
-
-    try {
-      const exportedAt = new Date()
-      const [profilesRows, roomsRows, workRows] = await Promise.all([
-        fetchAll('profiles'),
-        fetchAll('rooms'),
-        fetchAll('room_work'),
-      ])
-
-      const lines: string[] = []
-
-      const stamp = exportedAt.toISOString()
-
-      const exportRows: Array<AnyRow & { table: string; exported_at: string }> = []
-      for (const r of profilesRows) exportRows.push({ table: 'profiles', exported_at: stamp, ...r })
-      for (const r of roomsRows) exportRows.push({ table: 'rooms', exported_at: stamp, ...r })
-      for (const r of workRows) exportRows.push({ table: 'room_work', exported_at: stamp, ...r })
-
-      const columnSet = new Set<string>()
-      for (const r of exportRows) for (const k of Object.keys(r)) columnSet.add(k)
-      const columns = ['table', 'exported_at', ...Array.from(columnSet).filter((c) => c !== 'table' && c !== 'exported_at').sort()]
-
-      lines.push(columns.join(','))
-      for (const r of exportRows) lines.push(columns.map((c) => csvEscape(r[c])).join(','))
-
-      downloadCsv(`housekeeping_export_${stamp.replace(/[:.]/g, '-')}.csv`, lines.join('\n'))
-
-      setEndStep('deleting')
-
-      const { error: workDeleteError } = await supabase
-        .from('room_work')
-        .delete()
-        .neq('id', '00000000-0000-0000-0000-000000000000')
-      if (workDeleteError) throw workDeleteError
-
-      const { error: roomsDeleteError } = await supabase.from('rooms').delete().gt('room_number', -1)
-      if (roomsDeleteError) throw roomsDeleteError
-
-      setEndStep('done')
-      setEndSuccess('Work session ended. Rooms data cleared.')
-      setEndConfirmText('')
-      setEndOpen(false)
-      await loadAll()
-    } catch (e) {
-      setEndStep('idle')
-      setEndError(e instanceof Error ? e.message : 'Failed to end work session')
-    }
-  }
 
   const loadAll = useCallback(async () => {
     if (!canAccess) return
@@ -443,24 +339,7 @@ export default function StaffManagement() {
   }
 
   return (
-    <AppShell
-      title="Staff Management"
-      actions={
-        <button
-          type="button"
-          onClick={() => {
-            setEndError(null)
-            setEndSuccess(null)
-            setEndStep('idle')
-            setEndConfirmText('')
-            setEndOpen(true)
-          }}
-          className="rounded-xl bg-red-500/15 px-3 py-2 text-xs font-semibold text-red-100 ring-1 ring-red-400/20 hover:bg-red-500/20"
-        >
-          End today&apos;s work session
-        </button>
-      }
-    >
+    <AppShell title="Staff Management">
       <div className="space-y-4">
         <div className="rounded-2xl border border-white/10 bg-[#111A2E] p-4">
           <div className="flex items-start justify-between gap-3">
@@ -541,12 +420,6 @@ export default function StaffManagement() {
           </div>
         ) : null}
 
-        {endSuccess ? (
-          <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
-            {endSuccess}
-          </div>
-        ) : null}
-
         {loading ? (
           <div className="space-y-3">
             {Array.from({ length: 6 }).map((_, i) => (
@@ -568,9 +441,9 @@ export default function StaffManagement() {
                   }}
                   role="button"
                   tabIndex={0}
-                  className="rounded-2xl border border-white/10 bg-[#111A2E] p-4 text-left hover:bg-white/5"
+                  className="flex h-full flex-col rounded-2xl border border-white/10 bg-[#111A2E] p-4 text-left hover:bg-white/5"
                 >
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-1 items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="text-sm font-semibold text-white">{s.name ?? s.email ?? 'Unnamed'}</div>
                       <div className="mt-1 text-xs text-white/60">{roleLabel(s.role)}</div>
@@ -609,7 +482,7 @@ export default function StaffManagement() {
                     </div>
                   </div>
 
-                  <div className="mt-3 flex items-center justify-between gap-3">
+                  <div className="mt-auto flex items-center justify-between gap-3 pt-3">
                     <Link
                       to={`/productivity/${s.id}`}
                       onClick={(e) => e.stopPropagation()}
@@ -843,62 +716,6 @@ export default function StaffManagement() {
         </div>
       ) : null}
 
-      {endOpen ? (
-        <div className="fixed inset-0 z-50 bg-black/70 p-4">
-          <div className="mx-auto max-w-lg overflow-hidden rounded-2xl border border-white/10 bg-[#0B1220] shadow-2xl shadow-black/40">
-            <div className="flex items-center justify-between gap-3 border-b border-white/10 bg-[#111A2E] px-4 py-3">
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <TriangleAlert className="h-4 w-4 text-red-200" />
-                End today&apos;s work session
-              </div>
-              <button
-                type="button"
-                onClick={() => setEndOpen(false)}
-                className="rounded-xl bg-white/5 px-3 py-2 text-xs font-medium text-white/90 ring-1 ring-white/10 hover:bg-white/10"
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="p-4">
-              <div className="text-sm text-white/80">
-                This will export a CSV backup, then delete all rows from <span className="font-semibold text-white/90">rooms</span> and{' '}
-                <span className="font-semibold text-white/90">room_work</span>. Profiles will not be deleted.
-              </div>
-
-              {endError ? (
-                <div className="mt-3 rounded-xl border border-red-400/20 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-                  {endError}
-                </div>
-              ) : null}
-
-              <div className="mt-4">
-                <div className="text-xs font-medium text-white/70">Type END to confirm</div>
-                <input
-                  value={endConfirmText}
-                  onChange={(e) => setEndConfirmText(e.target.value)}
-                  className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-red-500/30"
-                  placeholder="END"
-                />
-              </div>
-
-              <div className="mt-4 flex items-center justify-between gap-3">
-                <div className="text-xs text-white/60">
-                  {endStep === 'exporting' ? 'Exporting…' : endStep === 'deleting' ? 'Deleting…' : null}
-                </div>
-                <button
-                  type="button"
-                  disabled={endStep !== 'idle' || endConfirmText.trim().toUpperCase() !== 'END'}
-                  onClick={() => void endWorkSession()}
-                  className="rounded-xl bg-red-500 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-red-500/20 hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  End session
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </AppShell>
   )
 }

@@ -20,6 +20,10 @@ export type Room = {
   status: RoomStatus
   task?: RoomTask | null
   post_release_request?: PostReleaseRequest | null
+  post_release_request_details?: unknown | null
+  post_release_request_rush?: boolean | null
+  post_release_request_claimed_by?: string | null
+  post_release_request_claimed_at?: string | null
   dnd?: boolean | null
   dnd_by?: string | null
   dnd_at?: string | null

@@ -249,7 +249,7 @@ export default function RoomDetail() {
                     <div className="text-2xl font-semibold leading-6">{formatRoomNumber(room.room_number)}</div>
                   </div>
                   <div className="mt-2">
-                    <StatusPill status={room.status} task={room.task ?? null} />
+                    <StatusPill status={room.status} task={room.task ?? null} postReleaseRequest={room.post_release_request ?? null} />
                   </div>
                   {room.task ? <div className="mt-2 text-xs text-white/70">Task: {taskLabel(room.task)}</div> : null}
                   <div className="mt-1 text-xs text-white/60">
@@ -260,7 +260,7 @@ export default function RoomDetail() {
                     mins
                   </div>
                 </div>
-                <div className="text-right text-xs text-white/60">{room.assigned_to ? 'Assigned' : 'Unassigned'}</div>
+                <div className="text-right text-xs text-white/60">{room.assigned_to ? `Assigned to: ${profileNames[room.assigned_to] ?? 'Unknown'}` : 'Unassigned'}</div>
               </div>
               {room.inspected_by ? (
                 <div className="mt-3 text-xs text-white/60">Supervisor: {profileNames[room.inspected_by] ?? room.inspected_by}</div>

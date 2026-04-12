@@ -1,4 +1,4 @@
-import type { RoomStatus, RoomTask } from '@/utils/domain'
+import type { PostReleaseRequest, RoomStatus, RoomTask } from '@/utils/domain'
 import { statusLabel } from '@/utils/domain'
 
 function pillClasses(status: RoomStatus): string {
@@ -14,10 +14,24 @@ function pillClasses(status: RoomStatus): string {
   }
 }
 
-export default function StatusPill({ status, task }: { status: RoomStatus; task?: RoomTask | null }) {
+export default function StatusPill({
+  status,
+  task,
+  postReleaseRequest,
+}: {
+  status: RoomStatus
+  task?: RoomTask | null
+  postReleaseRequest?: PostReleaseRequest | null
+}) {
+  const isRequested = status === 'released' && postReleaseRequest != null
+  const label = isRequested ? 'Requested' : statusLabel(status, task)
+  const classes = isRequested
+    ? 'bg-violet-500/15 text-violet-200 ring-1 ring-violet-400/20'
+    : pillClasses(status)
+
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${pillClasses(status)}`}>
-      {statusLabel(status, task)}
+    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${classes}`}>
+      {label}
     </span>
   )
 }

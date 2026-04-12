@@ -20,6 +20,10 @@ CREATE TABLE IF NOT EXISTS public.rooms (
   status text NOT NULL CHECK (status IN ('dirty', 'in_progress', 'pending_inspection', 'released')),
   task text CHECK (task IN ('checkout', 'stay', 'vip_stay', 'linen_change', 'full_service')),
   post_release_request text CHECK (post_release_request IN ('houseman', 'public_area')),
+  post_release_request_details jsonb,
+  post_release_request_rush boolean NOT NULL DEFAULT false,
+  post_release_request_claimed_by uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
+  post_release_request_claimed_at timestamptz,
   dnd boolean NOT NULL DEFAULT false,
   dnd_by uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
   dnd_at timestamptz,
@@ -32,6 +36,10 @@ CREATE TABLE IF NOT EXISTS public.rooms (
 
 ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS task text;
 ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS post_release_request text;
+ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS post_release_request_details jsonb;
+ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS post_release_request_rush boolean NOT NULL DEFAULT false;
+ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS post_release_request_claimed_by uuid;
+ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS post_release_request_claimed_at timestamptz;
 ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS dnd boolean NOT NULL DEFAULT false;
 ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS dnd_by uuid;
 ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS dnd_at timestamptz;
@@ -58,6 +66,10 @@ ADD CONSTRAINT rooms_released_by_fkey FOREIGN KEY (released_by) REFERENCES publi
 ALTER TABLE public.rooms DROP CONSTRAINT IF EXISTS rooms_dnd_by_fkey;
 ALTER TABLE public.rooms
 ADD CONSTRAINT rooms_dnd_by_fkey FOREIGN KEY (dnd_by) REFERENCES public.profiles(id) ON DELETE SET NULL;
+
+ALTER TABLE public.rooms DROP CONSTRAINT IF EXISTS rooms_post_release_request_claimed_by_fkey;
+ALTER TABLE public.rooms
+ADD CONSTRAINT rooms_post_release_request_claimed_by_fkey FOREIGN KEY (post_release_request_claimed_by) REFERENCES public.profiles(id) ON DELETE SET NULL;
 
 CREATE OR REPLACE FUNCTION public.set_updated_at()
 RETURNS trigger
@@ -113,6 +125,10 @@ CREATE TABLE IF NOT EXISTS public.work_history_rooms (
   status text NOT NULL,
   task text,
   post_release_request text,
+  post_release_request_details jsonb,
+  post_release_request_rush boolean NOT NULL DEFAULT false,
+  post_release_request_claimed_by uuid,
+  post_release_request_claimed_at timestamptz,
   dnd boolean NOT NULL DEFAULT false,
   dnd_by uuid,
   dnd_at timestamptz,
@@ -154,6 +170,80 @@ SET search_path = public
 AS $$
   SELECT role FROM public.profiles WHERE id = auth.uid();
 $$;
+
+CREATE OR REPLACE FUNCTION public.claim_post_release_request(p_room_number int)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  role_name text;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'Unauthorized';
+  END IF;
+
+  role_name := public.app_current_role();
+  IF role_name NOT IN ('houseman', 'public_area') THEN
+    RAISE EXCEPTION 'Unauthorized';
+  END IF;
+
+  UPDATE public.rooms
+  SET
+    post_release_request_claimed_by = auth.uid(),
+    post_release_request_claimed_at = now()
+  WHERE
+    room_number = p_room_number
+    AND status = 'released'
+    AND post_release_request = role_name
+    AND post_release_request_claimed_by IS NULL;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Not claimable';
+  END IF;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.clear_post_release_request(p_room_number int)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  role_name text;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'Unauthorized';
+  END IF;
+
+  role_name := public.app_current_role();
+  IF role_name NOT IN ('houseman', 'public_area') THEN
+    RAISE EXCEPTION 'Unauthorized';
+  END IF;
+
+  UPDATE public.rooms
+  SET
+    post_release_request = NULL,
+    post_release_request_details = NULL,
+    post_release_request_rush = false,
+    post_release_request_claimed_by = NULL,
+    post_release_request_claimed_at = NULL
+  WHERE
+    room_number = p_room_number
+    AND status = 'released'
+    AND post_release_request = role_name
+    AND (post_release_request_claimed_by IS NULL OR post_release_request_claimed_by = auth.uid());
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Not allowed';
+  END IF;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.claim_post_release_request(int) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.clear_post_release_request(int) TO authenticated;
 
 DROP POLICY IF EXISTS work_days_select_admin ON public.work_days;
 CREATE POLICY work_days_select_admin
@@ -210,7 +300,9 @@ BEGIN
   VALUES (target_work_date, now(), tz, rooms_n, work_n);
 
   INSERT INTO public.work_history_rooms (
-    work_date, room_number, status, task, post_release_request, dnd, dnd_by, dnd_at,
+    work_date, room_number, status, task, post_release_request, post_release_request_details, post_release_request_rush,
+    post_release_request_claimed_by, post_release_request_claimed_at,
+    dnd, dnd_by, dnd_at,
     assigned_to, inspected_by, released_by, released_at, updated_at
   )
   SELECT
@@ -219,6 +311,10 @@ BEGIN
     r.status,
     r.task,
     r.post_release_request,
+    r.post_release_request_details,
+    COALESCE(r.post_release_request_rush, false),
+    r.post_release_request_claimed_by,
+    r.post_release_request_claimed_at,
     COALESCE(r.dnd, false),
     r.dnd_by,
     r.dnd_at,
@@ -232,6 +328,10 @@ BEGIN
     status = EXCLUDED.status,
     task = EXCLUDED.task,
     post_release_request = EXCLUDED.post_release_request,
+    post_release_request_details = EXCLUDED.post_release_request_details,
+    post_release_request_rush = EXCLUDED.post_release_request_rush,
+    post_release_request_claimed_by = EXCLUDED.post_release_request_claimed_by,
+    post_release_request_claimed_at = EXCLUDED.post_release_request_claimed_at,
     dnd = EXCLUDED.dnd,
     dnd_by = EXCLUDED.dnd_by,
     dnd_at = EXCLUDED.dnd_at,
@@ -365,6 +465,10 @@ USING (
     AND post_release_request IS NOT NULL
     AND post_release_request = public.app_current_role()
     AND public.app_current_role() IN ('houseman', 'public_area')
+    AND (
+      post_release_request_claimed_by IS NULL
+      OR post_release_request_claimed_by = auth.uid()
+    )
   )
 );
 
@@ -439,6 +543,10 @@ USING (
   public.app_current_role() IN ('houseman', 'public_area')
   AND status = 'released'
   AND post_release_request = public.app_current_role()
+  AND (
+    post_release_request_claimed_by IS NULL
+    OR post_release_request_claimed_by = auth.uid()
+  )
 )
 WITH CHECK (
   status = (SELECT r.status FROM public.rooms r WHERE r.room_number = rooms.room_number)
@@ -448,6 +556,35 @@ WITH CHECK (
   AND released_at = (SELECT r.released_at FROM public.rooms r WHERE r.room_number = rooms.room_number)
   AND task = (SELECT r.task FROM public.rooms r WHERE r.room_number = rooms.room_number)
   AND post_release_request IS NULL
+  AND post_release_request_details IS NULL
+  AND post_release_request_rush = false
+  AND post_release_request_claimed_by IS NULL
+  AND post_release_request_claimed_at IS NULL
+);
+
+DROP POLICY IF EXISTS rooms_update_claim_post_release_request ON public.rooms;
+CREATE POLICY rooms_update_claim_post_release_request
+ON public.rooms
+FOR UPDATE
+TO authenticated
+USING (
+  public.app_current_role() IN ('houseman', 'public_area')
+  AND status = 'released'
+  AND post_release_request = public.app_current_role()
+  AND post_release_request_claimed_by IS NULL
+)
+WITH CHECK (
+  status = (SELECT r.status FROM public.rooms r WHERE r.room_number = rooms.room_number)
+  AND assigned_to = (SELECT r.assigned_to FROM public.rooms r WHERE r.room_number = rooms.room_number)
+  AND inspected_by IS NOT DISTINCT FROM (SELECT r.inspected_by FROM public.rooms r WHERE r.room_number = rooms.room_number)
+  AND released_by IS NOT DISTINCT FROM (SELECT r.released_by FROM public.rooms r WHERE r.room_number = rooms.room_number)
+  AND released_at IS NOT DISTINCT FROM (SELECT r.released_at FROM public.rooms r WHERE r.room_number = rooms.room_number)
+  AND task IS NOT DISTINCT FROM (SELECT r.task FROM public.rooms r WHERE r.room_number = rooms.room_number)
+  AND post_release_request = (SELECT r.post_release_request FROM public.rooms r WHERE r.room_number = rooms.room_number)
+  AND post_release_request_details IS NOT DISTINCT FROM (SELECT r.post_release_request_details FROM public.rooms r WHERE r.room_number = rooms.room_number)
+  AND post_release_request_rush IS NOT DISTINCT FROM (SELECT r.post_release_request_rush FROM public.rooms r WHERE r.room_number = rooms.room_number)
+  AND post_release_request_claimed_by = auth.uid()
+  AND post_release_request_claimed_at IS NOT NULL
 );
 
 DROP POLICY IF EXISTS rooms_update_supervisor_override_post_release_request ON public.rooms;
@@ -469,6 +606,10 @@ WITH CHECK (
   AND released_at = (SELECT r.released_at FROM public.rooms r WHERE r.room_number = rooms.room_number)
   AND task = (SELECT r.task FROM public.rooms r WHERE r.room_number = rooms.room_number)
   AND post_release_request IS NULL
+  AND post_release_request_details IS NULL
+  AND post_release_request_rush = false
+  AND post_release_request_claimed_by IS NULL
+  AND post_release_request_claimed_at IS NULL
 );
 
 DROP POLICY IF EXISTS rooms_update_staff_dirty_to_in_progress ON public.rooms;
