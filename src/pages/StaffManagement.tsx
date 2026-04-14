@@ -1,4 +1,4 @@
-import { CheckCircle2, Grid3X3, Shield, Users } from 'lucide-react'
+import { CheckCircle2, Grid3X3, Shield, Users, MoreVertical } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 
@@ -30,6 +30,21 @@ type StaffRow = {
 type TaskChoice = RoomTask
 
 type AssignSelection = Record<number, TaskChoice>
+
+type RoomOptions = {
+  room_type?: 'king' | 'twin' | null
+  project_details?: string[] | null
+}
+
+type RoomOptionsState = Record<number, RoomOptions>
+
+const PROJECT_OPTIONS = [
+  'Clean body fat',
+  'Clean behind the bedside table',
+  'High dusting',
+  'Mould clean',
+  'Vacuum under the bed'
+] as const
 
 function generateRoomNumbers(): string[] {
   const out: string[] = []
@@ -74,6 +89,9 @@ export default function StaffManagement() {
   const [saving, setSaving] = useState(false)
   const [success, setSuccess] = useState<string | null>(null)
   const [inspectorId, setInspectorId] = useState<string>('')
+  const [roomOptions, setRoomOptions] = useState<RoomOptionsState>({})
+  const [activeRoomMenu, setActiveRoomMenu] = useState<number | null>(null)
+  const [projectModal, setProjectModal] = useState<{ roomNumber: number; selected: string[] } | null>(null)
 
   const canAccess = profile?.role === 'manager' || profile?.role === 'supervisor'
 
@@ -197,17 +215,28 @@ export default function StaffManagement() {
     })
 
     const next: AssignSelection = {}
+    const options: RoomOptionsState = {}
     for (const r of rooms) {
       if (r.assigned_to === s.id) {
         next[r.room_number] = (r.task ?? 'checkout') as TaskChoice
       }
+      if (r.room_type || r.project_details) {
+        options[r.room_number] = {
+          room_type: r.room_type ?? null,
+          project_details: r.project_details as string[] ?? null
+        }
+      }
     }
     setSelection(next)
+    setRoomOptions(options)
   }
 
   function closeAssignModal() {
     setActiveStaff(null)
     setSelection({})
+    setRoomOptions({})
+    setActiveRoomMenu(null)
+    setProjectModal(null)
     setSaving(false)
   }
 
@@ -229,6 +258,39 @@ export default function StaffManagement() {
 
   function setRoomTask(roomNumber: number, task: TaskChoice) {
     setSelection((prev) => ({ ...prev, [roomNumber]: task }))
+  }
+
+  function toggleRoomMenu(roomNumber: number) {
+    setActiveRoomMenu((prev) => (prev === roomNumber ? null : roomNumber))
+  }
+
+  function setRoomType(roomNumber: number, type: 'king' | 'twin' | null) {
+    setRoomOptions((prev) => ({
+      ...prev,
+      [roomNumber]: { ...prev[roomNumber], room_type: type }
+    }))
+  }
+
+  function toggleProject(roomNumber: number) {
+    const current = roomOptions[roomNumber]?.project_details ?? []
+    const hasProject = current.length > 0
+    if (hasProject) {
+      setRoomOptions((prev) => ({
+        ...prev,
+        [roomNumber]: { ...prev[roomNumber], project_details: null }
+      }))
+    } else {
+      setProjectModal({ roomNumber, selected: [] })
+    }
+  }
+
+  function saveProjectOptions() {
+    if (!projectModal) return
+    setRoomOptions((prev) => ({
+      ...prev,
+      [projectModal.roomNumber]: { ...prev[projectModal.roomNumber], project_details: projectModal.selected }
+    }))
+    setProjectModal(null)
   }
 
   async function removeStaffMember(s: StaffRow) {
@@ -298,6 +360,8 @@ export default function StaffManagement() {
         task: selection[n],
         assigned_to: activeStaff.id,
         inspected_by: inspectorId,
+        room_type: roomOptions[n]?.room_type ?? null,
+        project_details: roomOptions[n]?.project_details ?? null,
       }))
 
       const { error: upsertError } = await supabase.from('rooms').upsert(payload, { onConflict: 'room_number' })
@@ -627,6 +691,9 @@ export default function StaffManagement() {
                   const selectedTask = selection[n]
                   const currentTask = r?.task ?? null
 
+                  const isCheckout = selectedTask === 'checkout' || currentTask === 'checkout'
+                  const roomOpts = roomOptions[n] || {}
+                  
                   return (
                     <button
                       key={n}
@@ -643,7 +710,72 @@ export default function StaffManagement() {
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="font-semibold">{displayRoomNumber(n)}</div>
-                        {isLocked ? <Shield className="h-3.5 w-3.5 text-white/40" /> : null}
+                        <div className="flex items-center gap-1">
+                          {isCheckout && isSelected && (
+                            <div className="relative">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  toggleRoomMenu(n)
+                                }}
+                                className="rounded p-0.5 hover:bg-white/10"
+                              >
+                                <MoreVertical className="h-3.5 w-3.5 text-white/60" />
+                              </button>
+                              {activeRoomMenu === n && (
+                                <div className="absolute right-0 top-6 z-10 w-32 rounded-xl border border-white/10 bg-[#111A2E] p-1 shadow-lg">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setRoomType(n, roomOpts.room_type === 'king' ? null : 'king')
+                                      toggleRoomMenu(n)
+                                    }}
+                                    className={`w-full rounded-lg px-2 py-1.5 text-left text-xs ${
+                                      roomOpts.room_type === 'king' 
+                                        ? 'bg-blue-500/15 text-blue-200' 
+                                        : 'text-white/80 hover:bg-white/5'
+                                    }`}
+                                  >
+                                    King
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setRoomType(n, roomOpts.room_type === 'twin' ? null : 'twin')
+                                      toggleRoomMenu(n)
+                                    }}
+                                    className={`w-full rounded-lg px-2 py-1.5 text-left text-xs ${
+                                      roomOpts.room_type === 'twin' 
+                                        ? 'bg-blue-500/15 text-blue-200' 
+                                        : 'text-white/80 hover:bg-white/5'
+                                    }`}
+                                  >
+                                    Twin
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      toggleProject(n)
+                                      toggleRoomMenu(n)
+                                    }}
+                                    className={`w-full rounded-lg px-2 py-1.5 text-left text-xs ${
+                                      (roomOpts.project_details?.length || 0) > 0
+                                        ? 'bg-amber-500/15 text-amber-200'
+                                        : 'text-white/80 hover:bg-white/5'
+                                    }`}
+                                  >
+                                    Project
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {isLocked ? <Shield className="h-3.5 w-3.5 text-white/40" /> : null}
+                        </div>
                       </div>
 
                       {isLocked ? (
@@ -673,6 +805,20 @@ export default function StaffManagement() {
                         <div className="mt-1 truncate text-[10px] text-white/60">Unassigned</div>
                       )}
 
+                      {isSelected && roomOpts.room_type && (
+                        <div className="mt-1 flex gap-1">
+                          <span className="inline-flex items-center rounded-full bg-blue-500/15 px-1.5 py-0.5 text-[9px] font-medium text-blue-200 ring-1 ring-blue-400/20">
+                            {roomOpts.room_type === 'king' ? 'King' : 'Twin'}
+                          </span>
+                        </div>
+                      )}
+                      {isSelected && roomOpts.project_details && roomOpts.project_details.length > 0 && (
+                        <div className="mt-1 flex gap-1">
+                          <span className="inline-flex items-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-medium text-amber-200 ring-1 ring-amber-400/20">
+                            Project
+                          </span>
+                        </div>
+                      )}
                       {assignedTo && assignedTo !== activeStaff.id ? (
                         <div className="mt-1 truncate text-[10px] text-white/40">{nameById.get(assignedTo) ?? 'Assigned'}</div>
                       ) : null}
@@ -711,6 +857,58 @@ export default function StaffManagement() {
                   Supervisors can assign staff rooms, but can only release room statuses after inspection.
                 </div>
               ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {projectModal ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-[#111A2E] p-4 shadow-2xl shadow-black/40">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="text-sm font-semibold text-white">Project options</div>
+              <button
+                type="button"
+                onClick={() => setProjectModal(null)}
+                className="rounded-xl bg-white/5 px-2 py-1 text-xs text-white/80 ring-1 ring-white/10 hover:bg-white/10"
+              >
+                Close
+              </button>
+            </div>
+            <div className="space-y-2">
+              {PROJECT_OPTIONS.map((option) => (
+                <label key={option} className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+                  <input
+                    type="checkbox"
+                    checked={projectModal.selected.includes(option)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setProjectModal(prev => prev ? { ...prev, selected: [...prev.selected, option] } : null)
+                      } else {
+                        setProjectModal(prev => prev ? { ...prev, selected: prev.selected.filter(s => s !== option) } : null)
+                      }
+                    }}
+                    className="rounded border-white/10 bg-white/5 text-blue-500 ring-1 ring-white/10 focus:ring-2 focus:ring-blue-500/40"
+                  />
+                  <div className="text-sm text-white">{option}</div>
+                </label>
+              ))}
+            </div>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setProjectModal(null)}
+                className="rounded-xl bg-white/5 px-3 py-2 text-xs font-medium text-white/90 ring-1 ring-white/10 hover:bg-white/10"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveProjectOptions}
+                className="rounded-xl bg-blue-500 px-3 py-2 text-xs font-semibold text-white shadow-lg shadow-blue-500/20 hover:bg-blue-400"
+              >
+                Save
+              </button>
             </div>
           </div>
         </div>

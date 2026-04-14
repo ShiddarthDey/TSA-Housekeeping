@@ -31,7 +31,9 @@ CREATE TABLE IF NOT EXISTS public.rooms (
   assigned_to uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
   released_by uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
   released_at timestamptz,
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  room_type text CHECK (room_type IN ('king', 'twin')),
+  project_details jsonb
 );
 
 ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS task text;
@@ -46,6 +48,8 @@ ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS dnd_at timestamptz;
 ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS inspected_by uuid;
 ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS released_by uuid;
 ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS released_at timestamptz;
+ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS room_type text;
+ALTER TABLE public.rooms ADD COLUMN IF NOT EXISTS project_details jsonb;
 
 ALTER TABLE public.rooms DROP CONSTRAINT IF EXISTS rooms_task_check;
 ALTER TABLE public.rooms
@@ -137,6 +141,8 @@ CREATE TABLE IF NOT EXISTS public.work_history_rooms (
   released_by uuid,
   released_at timestamptz,
   updated_at timestamptz,
+  room_type text,
+  project_details jsonb,
   PRIMARY KEY (work_date, room_number)
 );
 
@@ -303,7 +309,8 @@ BEGIN
     work_date, room_number, status, task, post_release_request, post_release_request_details, post_release_request_rush,
     post_release_request_claimed_by, post_release_request_claimed_at,
     dnd, dnd_by, dnd_at,
-    assigned_to, inspected_by, released_by, released_at, updated_at
+    assigned_to, inspected_by, released_by, released_at, updated_at,
+    room_type, project_details
   )
   SELECT
     target_work_date,
@@ -322,7 +329,9 @@ BEGIN
     r.inspected_by,
     r.released_by,
     r.released_at,
-    r.updated_at
+    r.updated_at,
+    r.room_type,
+    r.project_details
   FROM public.rooms r
   ON CONFLICT (work_date, room_number) DO UPDATE SET
     status = EXCLUDED.status,
@@ -339,7 +348,9 @@ BEGIN
     inspected_by = EXCLUDED.inspected_by,
     released_by = EXCLUDED.released_by,
     released_at = EXCLUDED.released_at,
-    updated_at = EXCLUDED.updated_at;
+    updated_at = EXCLUDED.updated_at,
+    room_type = EXCLUDED.room_type,
+    project_details = EXCLUDED.project_details;
 
   INSERT INTO public.work_history_room_work (
     work_date, id, room_number, staff_id, task, started_at, done_at, expected_minutes, created_at

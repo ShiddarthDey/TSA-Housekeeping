@@ -274,6 +274,27 @@ export default function RoomDetail() {
               {room.dnd ? (
                 <div className="mt-1 text-xs font-semibold text-amber-200">DND</div>
               ) : null}
+              {room.room_type ? (
+                <div className="mt-1 flex gap-2">
+                  <span className="inline-flex items-center rounded-full bg-blue-500/15 px-2 py-0.5 text-[11px] text-blue-200 ring-1 ring-blue-400/20">
+                    {room.room_type === 'king' ? 'King' : 'Twin'}
+                  </span>
+                </div>
+              ) : null}
+              {room.project_details && Array.isArray(room.project_details) && room.project_details.length > 0 ? (
+                <div className="mt-1 flex gap-2">
+                  <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-200 ring-1 ring-amber-400/20">
+                    Project
+                  </span>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {room.project_details.map((item) => (
+                      <span key={item} className="inline-flex items-center rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-white/80 ring-1 ring-white/10">
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div className="rounded-2xl border border-white/10 bg-[#111A2E] p-4">

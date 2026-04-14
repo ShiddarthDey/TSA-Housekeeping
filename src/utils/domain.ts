@@ -32,6 +32,8 @@ export type Room = {
   released_by?: string | null
   released_at?: string | null
   updated_at?: string
+  room_type?: 'king' | 'twin' | null
+  project_details?: unknown | null
 }
 
 export type RoomWork = {

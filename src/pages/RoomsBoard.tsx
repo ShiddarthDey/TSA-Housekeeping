@@ -58,6 +58,7 @@ type RequestModalState =
     }
 
 const HOUSEMAN_OPTIONS: Array<{ key: string; label: string; counter?: boolean }> = [
+  { key: 'carpet_wet', label: 'Carpet Wet' },
   { key: 'body_wash', label: 'Body wash', counter: true },
   { key: 'hand_wash', label: 'Hand wash' },
   { key: 'body_lotion', label: 'Body lotion' },
@@ -1145,6 +1146,16 @@ export default function RoomsBoard() {
                           }`}
                         >
                           {taskLabel(room.task)}
+                        </span>
+                      ) : null}
+                      {room.room_type ? (
+                        <span className="ml-2 inline-flex items-center rounded-full bg-blue-500/15 px-2 py-0.5 text-[11px] text-blue-200 ring-1 ring-blue-400/20">
+                          {room.room_type === 'king' ? 'King' : 'Twin'}
+                        </span>
+                      ) : null}
+                      {room.project_details && Array.isArray(room.project_details) && room.project_details.length > 0 ? (
+                        <span className="ml-2 inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-200 ring-1 ring-amber-400/20">
+                          Project
                         </span>
                       ) : null}
                       {room.dnd ? <span className="ml-2 text-[11px] font-semibold text-amber-200">DND</span> : null}
