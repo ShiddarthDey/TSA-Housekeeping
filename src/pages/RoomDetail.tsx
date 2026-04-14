@@ -70,7 +70,7 @@ export default function RoomDetail() {
       const { data, error } = await supabase
         .from('rooms')
         .select(
-          'room_number, status, task, post_release_request, dnd, dnd_by, dnd_at, assigned_to, inspected_by, released_by, released_at, updated_at',
+          'room_number, status, task, post_release_request, dnd, dnd_by, dnd_at, assigned_to, inspected_by, released_by, released_at, updated_at, room_type, project_details',
         )
         .eq('room_number', parsedRoomNumber)
         .maybeSingle()
@@ -272,23 +272,25 @@ export default function RoomDetail() {
                 <div className="mt-1 text-xs text-white/60">{postReleaseRequestLabel(room.post_release_request)}</div>
               ) : null}
               {room.dnd ? (
-                <div className="mt-1 text-xs font-semibold text-amber-200">DND</div>
+                <div className="mt-1 flex gap-2">
+                  <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-medium text-amber-200 ring-1 ring-amber-400/20">DND</span>
+                </div>
               ) : null}
               {room.room_type ? (
                 <div className="mt-1 flex gap-2">
-                  <span className="inline-flex items-center rounded-full bg-blue-500/15 px-2 py-0.5 text-[11px] text-blue-200 ring-1 ring-blue-400/20">
+                  <span className="inline-flex items-center rounded-full bg-blue-500/15 px-2.5 py-1 text-xs font-medium text-blue-200 ring-1 ring-blue-400/20">
                     {room.room_type === 'king' ? 'King' : 'Twin'}
                   </span>
                 </div>
               ) : null}
               {room.project_details && Array.isArray(room.project_details) && room.project_details.length > 0 ? (
                 <div className="mt-1 flex gap-2">
-                  <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-200 ring-1 ring-amber-400/20">
+                  <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-medium text-amber-200 ring-1 ring-amber-400/20">
                     Project
                   </span>
                   <div className="mt-1 flex flex-wrap gap-1">
                     {room.project_details.map((item) => (
-                      <span key={item} className="inline-flex items-center rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-white/80 ring-1 ring-white/10">
+                      <span key={item} className="inline-flex items-center rounded-full bg-white/5 px-2.5 py-1 text-xs font-medium text-white/80 ring-1 ring-white/10">
                         {item}
                       </span>
                     ))}

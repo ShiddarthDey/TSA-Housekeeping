@@ -1139,7 +1139,7 @@ export default function RoomsBoard() {
                       />
                       {room.task ? (
                         <span
-                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] ring-1 ${
+                          className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${
                             room.task === 'checkout'
                               ? 'bg-red-500/15 text-red-200 ring-red-400/20'
                               : 'bg-emerald-500/15 text-emerald-200 ring-emerald-400/20'
@@ -1149,27 +1149,27 @@ export default function RoomsBoard() {
                         </span>
                       ) : null}
                       {room.room_type ? (
-                        <span className="inline-flex items-center rounded-full bg-blue-500/15 px-2 py-0.5 text-[11px] text-blue-200 ring-1 ring-blue-400/20">
+                        <span className="inline-flex items-center rounded-full bg-blue-500/15 px-2.5 py-1 text-xs font-medium text-blue-200 ring-1 ring-blue-400/20">
                           {room.room_type === 'king' ? 'King' : 'Twin'}
                         </span>
                       ) : null}
                       {room.project_details && Array.isArray(room.project_details) && room.project_details.length > 0 ? (
-                        <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-200 ring-1 ring-amber-400/20">
+                        <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-medium text-amber-200 ring-1 ring-amber-400/20">
                           Project
                         </span>
                       ) : null}
-                      {room.dnd ? <span className="text-[11px] font-semibold text-amber-200">DND</span> : null}
+                      {room.dnd ? <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-medium text-amber-200 ring-1 ring-amber-400/20">DND</span> : null}
                       {(profile.role === 'houseman' || profile.role === 'public_area') &&
                       activeStatus === 'requests' &&
                       room.post_release_request_rush ? (
-                        <span className="inline-flex items-center rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-semibold text-red-100 ring-1 ring-red-400/20">
+                        <span className="inline-flex items-center rounded-full bg-red-500/15 px-2.5 py-1 text-xs font-medium text-red-100 ring-1 ring-red-400/20">
                           RUSH
                         </span>
                       ) : null}
                       {(profile.role === 'houseman' || profile.role === 'public_area') &&
                       activeStatus === 'requests' &&
                       room.post_release_request_claimed_by === profile.id ? (
-                        <span className="inline-flex items-center rounded-full bg-white/5 px-2 py-0.5 text-[11px] font-semibold text-white/80 ring-1 ring-white/10">
+                        <span className="inline-flex items-center rounded-full bg-white/5 px-2.5 py-1 text-xs font-medium text-white/80 ring-1 ring-white/10">
                           Claimed
                         </span>
                       ) : null}
@@ -1190,7 +1190,7 @@ export default function RoomsBoard() {
                         {getRequestTokens(profile.role as PostReleaseRequest, room.post_release_request_details).map((t) => (
                           <span
                             key={t.key}
-                            className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] ring-1 ${
+                            className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${
                               t.tone === 'ozone'
                                 ? 'bg-amber-500/15 text-amber-200 ring-amber-400/20'
                                 : 'bg-white/5 text-white/80 ring-white/10'

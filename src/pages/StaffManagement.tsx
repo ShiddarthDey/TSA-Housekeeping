@@ -189,7 +189,9 @@ export default function StaffManagement() {
     try {
       const [{ data: staffData, error: staffError }, { data: roomData, error: roomError }] = await Promise.all([
         supabase.from('profiles').select('id, name, role, email, is_active'),
-        supabase.from('rooms').select('room_number, status, task, assigned_to, inspected_by, released_by, released_at, updated_at'),
+        supabase
+          .from('rooms')
+          .select('room_number, status, task, assigned_to, inspected_by, released_by, released_at, updated_at, room_type, project_details'),
       ])
 
       if (staffError) throw staffError
@@ -807,14 +809,14 @@ export default function StaffManagement() {
 
                       {isSelected && roomOpts.room_type && (
                         <div className="mt-1 flex gap-1">
-                          <span className="inline-flex items-center rounded-full bg-blue-500/15 px-1.5 py-0.5 text-[9px] font-medium text-blue-200 ring-1 ring-blue-400/20">
+                          <span className="inline-flex items-center rounded-full bg-blue-500/15 px-2.5 py-1 text-xs font-medium text-blue-200 ring-1 ring-blue-400/20">
                             {roomOpts.room_type === 'king' ? 'King' : 'Twin'}
                           </span>
                         </div>
                       )}
                       {isSelected && roomOpts.project_details && roomOpts.project_details.length > 0 && (
                         <div className="mt-1 flex gap-1">
-                          <span className="inline-flex items-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-medium text-amber-200 ring-1 ring-amber-400/20">
+                          <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-medium text-amber-200 ring-1 ring-amber-400/20">
                             Project
                           </span>
                         </div>
