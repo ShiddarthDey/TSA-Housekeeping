@@ -245,7 +245,7 @@ export default function RoomsBoard() {
       const { data, error } = await supabase
         .from('rooms')
         .select(
-          'room_number, status, task, post_release_request, post_release_request_details, post_release_request_rush, post_release_request_claimed_by, post_release_request_claimed_at, dnd, dnd_by, dnd_at, assigned_to, inspected_by, released_by, released_at, updated_at',
+          'room_number, status, task, post_release_request, post_release_request_details, post_release_request_rush, post_release_request_claimed_by, post_release_request_claimed_at, dnd, dnd_by, dnd_at, assigned_to, inspected_by, released_by, released_at, updated_at, room_type, project_details',
         )
       if (error) throw error
       const nextRooms = (data ?? []) as Room[]
@@ -1125,9 +1125,9 @@ export default function RoomsBoard() {
                   (profile.role === 'supervisor' && room.assigned_to === profile.id))
 
               return (
-                <div key={room.room_number} className="flex items-center justify-between gap-3 px-4 py-3">
+                <div key={room.room_number} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:px-4 sm:py-3">
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <div className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-white/5 ring-1 ring-white/10">
                         {statusIcon(room.status)}
                       </div>
@@ -1139,7 +1139,7 @@ export default function RoomsBoard() {
                       />
                       {room.task ? (
                         <span
-                          className={`ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-[11px] ring-1 ${
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] ring-1 ${
                             room.task === 'checkout'
                               ? 'bg-red-500/15 text-red-200 ring-red-400/20'
                               : 'bg-emerald-500/15 text-emerald-200 ring-emerald-400/20'
@@ -1149,32 +1149,32 @@ export default function RoomsBoard() {
                         </span>
                       ) : null}
                       {room.room_type ? (
-                        <span className="ml-2 inline-flex items-center rounded-full bg-blue-500/15 px-2 py-0.5 text-[11px] text-blue-200 ring-1 ring-blue-400/20">
+                        <span className="inline-flex items-center rounded-full bg-blue-500/15 px-2 py-0.5 text-[11px] text-blue-200 ring-1 ring-blue-400/20">
                           {room.room_type === 'king' ? 'King' : 'Twin'}
                         </span>
                       ) : null}
                       {room.project_details && Array.isArray(room.project_details) && room.project_details.length > 0 ? (
-                        <span className="ml-2 inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-200 ring-1 ring-amber-400/20">
+                        <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-200 ring-1 ring-amber-400/20">
                           Project
                         </span>
                       ) : null}
-                      {room.dnd ? <span className="ml-2 text-[11px] font-semibold text-amber-200">DND</span> : null}
+                      {room.dnd ? <span className="text-[11px] font-semibold text-amber-200">DND</span> : null}
                       {(profile.role === 'houseman' || profile.role === 'public_area') &&
                       activeStatus === 'requests' &&
                       room.post_release_request_rush ? (
-                        <span className="ml-2 inline-flex items-center rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-semibold text-red-100 ring-1 ring-red-400/20">
+                        <span className="inline-flex items-center rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-semibold text-red-100 ring-1 ring-red-400/20">
                           RUSH
                         </span>
                       ) : null}
                       {(profile.role === 'houseman' || profile.role === 'public_area') &&
                       activeStatus === 'requests' &&
                       room.post_release_request_claimed_by === profile.id ? (
-                        <span className="ml-2 inline-flex items-center rounded-full bg-white/5 px-2 py-0.5 text-[11px] font-semibold text-white/80 ring-1 ring-white/10">
+                        <span className="inline-flex items-center rounded-full bg-white/5 px-2 py-0.5 text-[11px] font-semibold text-white/80 ring-1 ring-white/10">
                           Claimed
                         </span>
                       ) : null}
                     </div>
-                    <div className="mt-1 text-[11px] text-white/60">
+                    <div className="mt-2 text-[11px] text-white/60">
                       {roomTypeLabel(roomType(room.room_number))} ·{' '}
                       {formatMinutes(
                         estimatedMinutesForRoomAndTask(room.room_number, (room.task ?? 'checkout') as RoomTask),
@@ -1204,7 +1204,7 @@ export default function RoomsBoard() {
                     ) : null}
                   </div>
 
-                  <div className="flex items-center gap-2 px-4 pb-3 sm:pb-3">
+                  <div className="flex flex-wrap items-center gap-2 mt-3 sm:mt-0">
                     <Link
                       to={`/rooms/${room.room_number}`}
                       className="inline-flex items-center gap-1 rounded-xl bg-white/5 px-3 py-2 text-xs font-medium text-white/90 ring-1 ring-white/10 hover:bg-white/10"
